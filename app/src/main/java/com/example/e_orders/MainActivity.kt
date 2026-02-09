@@ -26,6 +26,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -105,12 +106,17 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            var isDarkMode by remember { mutableStateOf(false) }
+            val dataManager = remember { DataManager(this) }
+            var isDarkMode by remember { mutableStateOf(dataManager.loadDarkMode()) }
 
             CafeOrderTheme(darkTheme = isDarkMode) {
                 CafeOrderApp(
+                    dataManager = dataManager,
                     isDarkMode = isDarkMode,
-                    onToggleDarkMode = { isDarkMode = !isDarkMode }
+                    onToggleDarkMode = {
+                        isDarkMode = !isDarkMode
+                        dataManager.saveDarkMode(isDarkMode)
+                    }
                 )
             }
         }
@@ -139,26 +145,26 @@ fun CafeOrderTheme(darkTheme: Boolean = false, content: @Composable () -> Unit) 
         )
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        content = content
-    )
+    MaterialTheme(colorScheme = colorScheme, content = content)
 }
 
 @Composable
 fun CafeOrderApp(
+    dataManager: DataManager,
     isDarkMode: Boolean,
     onToggleDarkMode: () -> Unit
 ) {
     var isAdminMode by remember { mutableStateOf(false) }
     var showLoginDialog by remember { mutableStateOf(false) }
-    var products by remember { mutableStateOf(getInitialProducts()) }
-    var tables by remember { mutableStateOf(getInitialTables(17)) }
+
+    // Load saved data or use defaults
+    var products by remember { mutableStateOf(dataManager.loadProducts() ?: getInitialProducts()) }
+    var tables by remember { mutableStateOf(dataManager.loadTables() ?: getInitialTables(17)) }
     var tableOrders by remember { mutableStateOf<Map<Int, TableOrder>>(emptyMap()) }
     var selectedTable by remember { mutableStateOf<Int?>(null) }
-    var orderHistory by remember { mutableStateOf<List<CompletedOrder>>(emptyList()) }
-    var categoryCustomizations by remember { mutableStateOf(getInitialCustomizations()) }
-    var categories by remember { mutableStateOf(listOf("Καφέδες", "Αναψυκτικά", "Μπίρες", "Cocktails", "Ποτά", "Snacks")) }
+    var orderHistory by remember { mutableStateOf(dataManager.loadOrderHistory() ?: emptyList()) }
+    var categoryCustomizations by remember { mutableStateOf(dataManager.loadCustomizations() ?: getInitialCustomizations()) }
+    var categories by remember { mutableStateOf(dataManager.loadCategories() ?: listOf("Καφέδες", "Αναψυκτικά", "Μπίρες", "Cocktails", "Ποτά", "Snacks")) }
 
     Scaffold(
         topBar = {
@@ -219,10 +225,10 @@ fun CafeOrderApp(
                         tables = tables,
                         orderHistory = orderHistory,
                         categoryCustomizations = categoryCustomizations,
-                        onProductsChange = { products = it },
-                        onCategoriesChange = { categories = it },
-                        onTablesChange = { tables = it },
-                        onCustomizationsChange = { categoryCustomizations = it }
+                        onProductsChange = { products = it; dataManager.saveProducts(it) },
+                        onCategoriesChange = { categories = it; dataManager.saveCategories(it) },
+                        onTablesChange = { tables = it; dataManager.saveTables(it) },
+                        onCustomizationsChange = { categoryCustomizations = it; dataManager.saveCustomizations(it) }
                     )
                 }
                 selectedTable != null -> {
@@ -256,6 +262,7 @@ fun CafeOrderApp(
                         },
                         onCloseOrder = { completedOrder ->
                             orderHistory = orderHistory + completedOrder
+                            dataManager.saveOrderHistory(orderHistory)
                             tableOrders = tableOrders - selectedTable!!
                             selectedTable = null
                         },
@@ -275,6 +282,7 @@ fun CafeOrderApp(
 
     if (showLoginDialog) {
         AdminLoginDialog(
+            adminPassword = dataManager.loadAdminPassword(),
             onDismiss = { showLoginDialog = false },
             onSuccess = {
                 isAdminMode = true
@@ -387,7 +395,7 @@ fun TableCard(
 // ============================================================
 
 @Composable
-fun AdminLoginDialog(onDismiss: () -> Unit, onSuccess: () -> Unit) {
+fun AdminLoginDialog(adminPassword: String, onDismiss: () -> Unit, onSuccess: () -> Unit) {
     var password by remember { mutableStateOf("") }
     var error by remember { mutableStateOf(false) }
 
@@ -407,12 +415,10 @@ fun AdminLoginDialog(onDismiss: () -> Unit, onSuccess: () -> Unit) {
                 if (error) {
                     Text("Λάθος κωδικός", color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(start = 16.dp, top = 4.dp))
                 }
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("Προεπιλεγμένος κωδικός: admin123", fontSize = 12.sp, color = Color.Gray)
             }
         },
         confirmButton = {
-            Button(onClick = { if (password == "admin123") onSuccess() else error = true }) { Text("Είσοδος") }
+            Button(onClick = { if (password == adminPassword) onSuccess() else error = true }) { Text("Είσοδος") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Ακύρωση") }
@@ -500,7 +506,6 @@ fun CustomizationAdminPanel(
                     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                 ) {
                     Column {
-                        // Category Header
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -511,11 +516,7 @@ fun CustomizationAdminPanel(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(category, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurface)
-                                Text(
-                                    "${options.size} επιλογές • $productCount προϊόντα",
-                                    fontSize = 12.sp,
-                                    color = Color.Gray
-                                )
+                                Text("${options.size} επιλογές • $productCount προϊόντα", fontSize = 12.sp, color = Color.Gray)
                             }
                             Row {
                                 IconButton(onClick = { editingCategoryName = category }) {
@@ -532,7 +533,6 @@ fun CustomizationAdminPanel(
                             }
                         }
 
-                        // Customization Options (expanded)
                         if (isExpanded) {
                             Divider(color = Color.Gray.copy(alpha = 0.3f))
 
@@ -602,7 +602,6 @@ fun CustomizationAdminPanel(
         }
     }
 
-    // Add Category Dialog
     if (showAddCategoryDialog) {
         SimpleNameDialog(
             title = "Νέα Κατηγορία",
@@ -617,7 +616,6 @@ fun CustomizationAdminPanel(
         )
     }
 
-    // Edit Category Name
     if (editingCategoryName != null) {
         SimpleNameDialog(
             title = "Μετονομασία Κατηγορίας",
@@ -638,7 +636,6 @@ fun CustomizationAdminPanel(
         )
     }
 
-    // Delete Category
     if (showDeleteCategoryConfirm != null) {
         val cat = showDeleteCategoryConfirm!!
         val productCount = products.count { it.category == cat }
@@ -674,7 +671,6 @@ fun CustomizationAdminPanel(
         )
     }
 
-    // Add/Edit Customization Option
     if (showAddOptionDialog != null || editingOption != null) {
         val categoryName = showAddOptionDialog ?: editingOption!!.first
         val existingOption = editingOption?.second
@@ -683,19 +679,14 @@ fun CustomizationAdminPanel(
             title = if (existingOption != null) "Επεξεργασία Επιλογής" else "Νέα Επιλογή στο \"$categoryName\"",
             initialName = existingOption?.name ?: "",
             initialChoices = existingOption?.choices ?: emptyList(),
-            onDismiss = {
-                showAddOptionDialog = null
-                editingOption = null
-            },
+            onDismiss = { showAddOptionDialog = null; editingOption = null },
             onSave = { name, choices ->
                 val updated = categoryCustomizations.toMutableMap()
                 val currentOptions = (updated[categoryName] ?: emptyList()).toMutableList()
 
                 if (existingOption != null) {
                     val index = currentOptions.indexOfFirst { it.id == existingOption.id }
-                    if (index >= 0) {
-                        currentOptions[index] = existingOption.copy(name = name, choices = choices)
-                    }
+                    if (index >= 0) currentOptions[index] = existingOption.copy(name = name, choices = choices)
                 } else {
                     currentOptions.add(CustomizationOption(name = name, choices = choices))
                 }
@@ -717,30 +708,17 @@ fun SimpleNameDialog(title: String, initialName: String, onDismiss: () -> Unit, 
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text("Όνομα") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
+            OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Όνομα") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         },
-        confirmButton = {
-            Button(onClick = { if (name.isNotBlank()) onSave(name.trim()) }) { Text("Αποθήκευση") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Ακύρωση") }
-        }
+        confirmButton = { Button(onClick = { if (name.isNotBlank()) onSave(name.trim()) }) { Text("Αποθήκευση") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Ακύρωση") } }
     )
 }
 
 @Composable
 fun CustomizationOptionDialog(
-    title: String,
-    initialName: String,
-    initialChoices: List<String>,
-    onDismiss: () -> Unit,
-    onSave: (String, List<String>) -> Unit
+    title: String, initialName: String, initialChoices: List<String>,
+    onDismiss: () -> Unit, onSave: (String, List<String>) -> Unit
 ) {
     var name by remember { mutableStateOf(initialName) }
     var choices by remember { mutableStateOf(initialChoices.toMutableList()) }
@@ -751,66 +729,32 @@ fun CustomizationOptionDialog(
         title = { Text(title) },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Όνομα (π.χ. Ζάχαρη)") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
+                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Όνομα (π.χ. Ζάχαρη)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Spacer(modifier = Modifier.height(16.dp))
                 Text("Επιλογές:", fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.height(8.dp))
 
                 choices.forEachIndexed { index, choice ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
+                    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(choice, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
-                        IconButton(
-                            onClick = { choices = choices.toMutableList().also { it.removeAt(index) } },
-                            modifier = Modifier.size(32.dp)
-                        ) {
+                        IconButton(onClick = { choices = choices.toMutableList().also { it.removeAt(index) } }, modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Default.Close, contentDescription = "Αφαίρεση", tint = Color.Red, modifier = Modifier.size(16.dp))
                         }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
-
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    OutlinedTextField(
-                        value = newChoice,
-                        onValueChange = { newChoice = it },
-                        label = { Text("Νέα επιλογή") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
+                    OutlinedTextField(value = newChoice, onValueChange = { newChoice = it }, label = { Text("Νέα επιλογή") }, singleLine = true, modifier = Modifier.weight(1f))
                     Spacer(modifier = Modifier.width(8.dp))
                     IconButton(onClick = {
-                        if (newChoice.isNotBlank()) {
-                            choices = (choices + newChoice.trim()).toMutableList()
-                            newChoice = ""
-                        }
-                    }) {
-                        Icon(Icons.Default.Add, contentDescription = "Προσθήκη", tint = MaterialTheme.colorScheme.primary)
-                    }
+                        if (newChoice.isNotBlank()) { choices = (choices + newChoice.trim()).toMutableList(); newChoice = "" }
+                    }) { Icon(Icons.Default.Add, contentDescription = "Προσθήκη", tint = MaterialTheme.colorScheme.primary) }
                 }
             }
         },
-        confirmButton = {
-            Button(onClick = {
-                if (name.isNotBlank() && choices.isNotEmpty()) onSave(name.trim(), choices.toList())
-            }) { Text("Αποθήκευση") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Ακύρωση") }
-        }
+        confirmButton = { Button(onClick = { if (name.isNotBlank() && choices.isNotEmpty()) onSave(name.trim(), choices.toList()) }) { Text("Αποθήκευση") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Ακύρωση") } }
     )
 }
 
@@ -850,17 +794,13 @@ fun ProductsAdminPanel(products: List<Product>, categories: List<String>, onProd
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
         ) {
-            Icon(Icons.Default.Add, contentDescription = null)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Προσθήκη Προϊόντος")
+            Icon(Icons.Default.Add, contentDescription = null); Spacer(modifier = Modifier.width(8.dp)); Text("Προσθήκη Προϊόντος")
         }
     }
 
     if (showAddDialog || editingProduct != null) {
         ProductDialog(
-            product = editingProduct,
-            category = selectedCategory,
-            categories = categories,
+            product = editingProduct, category = selectedCategory, categories = categories,
             onDismiss = { showAddDialog = false; editingProduct = null },
             onSave = { newProduct ->
                 if (editingProduct != null) onProductsChange(products.map { if (it.id == newProduct.id) newProduct else it })
@@ -873,16 +813,8 @@ fun ProductsAdminPanel(products: List<Product>, categories: List<String>, onProd
 
 @Composable
 fun ProductCard(product: Product, onEdit: () -> Unit, onDelete: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)) {
+        Row(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(text = product.name, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
                 Text(text = "€${String.format("%.2f", product.price)}", color = MaterialTheme.colorScheme.primary, fontSize = 14.sp)
@@ -914,9 +846,7 @@ fun ProductDialog(product: Product?, category: String, categories: List<String>,
                 ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
                     OutlinedTextField(value = selectedCategory, onValueChange = {}, readOnly = true, label = { Text("Κατηγορία") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) }, modifier = Modifier.fillMaxWidth().menuAnchor())
                     ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                        categories.forEach { cat ->
-                            DropdownMenuItem(text = { Text(cat) }, onClick = { selectedCategory = cat; expanded = false })
-                        }
+                        categories.forEach { cat -> DropdownMenuItem(text = { Text(cat) }, onClick = { selectedCategory = cat; expanded = false }) }
                     }
                 }
             }
@@ -924,9 +854,8 @@ fun ProductDialog(product: Product?, category: String, categories: List<String>,
         confirmButton = {
             Button(onClick = {
                 val priceValue = price.toDoubleOrNull()
-                if (name.isNotBlank() && priceValue != null && priceValue > 0) {
+                if (name.isNotBlank() && priceValue != null && priceValue > 0)
                     onSave(Product(id = product?.id ?: UUID.randomUUID().toString(), name = name, price = priceValue, category = selectedCategory))
-                }
             }) { Text("Αποθήκευση") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Ακύρωση") } }
@@ -939,18 +868,11 @@ fun ProductDialog(product: Product?, category: String, categories: List<String>,
 
 @Composable
 fun OrderScreen(
-    products: List<Product>,
-    categories: List<String>,
-    categoryCustomizations: Map<String, List<CustomizationOption>>,
-    tableNumber: Int,
-    currentOrder: MutableList<OrderItem>,
-    currentStatus: OrderStatus,
-    allTables: List<Table>,
-    tableOrders: Map<Int, TableOrder>,
-    onOrderUpdate: (MutableList<OrderItem>, OrderStatus) -> Unit,
-    onTransferTable: (Int, Int) -> Unit,
-    onCloseOrder: (CompletedOrder) -> Unit,
-    onBack: () -> Unit
+    products: List<Product>, categories: List<String>, categoryCustomizations: Map<String, List<CustomizationOption>>,
+    tableNumber: Int, currentOrder: MutableList<OrderItem>, currentStatus: OrderStatus,
+    allTables: List<Table>, tableOrders: Map<Int, TableOrder>,
+    onOrderUpdate: (MutableList<OrderItem>, OrderStatus) -> Unit, onTransferTable: (Int, Int) -> Unit,
+    onCloseOrder: (CompletedOrder) -> Unit, onBack: () -> Unit
 ) {
     var selectedCategory by remember { mutableStateOf(categories.firstOrNull() ?: "") }
     var orderItems by remember(tableNumber) { mutableStateOf(currentOrder.toMutableList()) }
@@ -1032,8 +954,7 @@ fun OrderScreen(
     if (selectedProduct != null) {
         val options = categoryCustomizations[selectedProduct!!.category] ?: emptyList()
         ProductCustomizationDialog(
-            product = selectedProduct!!,
-            customizationOptions = options,
+            product = selectedProduct!!, customizationOptions = options,
             onDismiss = { selectedProduct = null },
             onAddToOrder = { orderItem -> orderItems = (orderItems + orderItem).toMutableList(); saveOrder(); selectedProduct = null }
         )
@@ -1072,10 +993,8 @@ fun OrderScreen(
 
 @Composable
 fun ProductCustomizationDialog(
-    product: Product,
-    customizationOptions: List<CustomizationOption>,
-    onDismiss: () -> Unit,
-    onAddToOrder: (OrderItem) -> Unit
+    product: Product, customizationOptions: List<CustomizationOption>,
+    onDismiss: () -> Unit, onAddToOrder: (OrderItem) -> Unit
 ) {
     var quantity by remember { mutableStateOf(1) }
     var notes by remember { mutableStateOf("") }
@@ -1086,7 +1005,6 @@ fun ProductCustomizationDialog(
         title = { Text(product.name) },
         text = {
             Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
-                // Quantity
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("Ποσότητα:", fontWeight = FontWeight.Bold)
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1096,16 +1014,11 @@ fun ProductCustomizationDialog(
                     }
                 }
 
-                // Dynamic Customizations
                 if (customizationOptions.isNotEmpty()) {
                     Divider(modifier = Modifier.padding(vertical = 8.dp))
-
                     customizationOptions.forEach { option ->
                         Text("${option.name}:", fontWeight = FontWeight.Bold)
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
+                        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             option.choices.forEach { choice ->
                                 FilterChip(
                                     selected = selections[option.name] == choice,
@@ -1120,26 +1033,18 @@ fun ProductCustomizationDialog(
                 }
 
                 Divider(modifier = Modifier.padding(vertical = 8.dp))
-
-                // Notes
                 Text("Σχόλια:", fontWeight = FontWeight.Bold)
                 OutlinedTextField(
-                    value = notes,
-                    onValueChange = { notes = it },
+                    value = notes, onValueChange = { notes = it },
                     placeholder = { Text("π.χ. χωρίς αφρόγαλα, με πάγο...") },
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                    minLines = 2,
-                    maxLines = 4
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), minLines = 2, maxLines = 4
                 )
-
                 Spacer(modifier = Modifier.height(8.dp))
                 Text("Σύνολο: €${String.format("%.2f", product.price * quantity)}", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = MaterialTheme.colorScheme.primary)
             }
         },
         confirmButton = {
-            Button(onClick = {
-                onAddToOrder(OrderItem(product = product, quantity = quantity, customizations = selections.toMutableMap(), notes = notes))
-            }) { Text("Προσθήκη") }
+            Button(onClick = { onAddToOrder(OrderItem(product = product, quantity = quantity, customizations = selections.toMutableMap(), notes = notes)) }) { Text("Προσθήκη") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Ακύρωση") } }
     )
@@ -1147,11 +1052,7 @@ fun ProductCustomizationDialog(
 
 @Composable
 fun ProductOrderCard(product: Product, onAddToOrder: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth().clickable { onAddToOrder() },
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
+    Card(modifier = Modifier.fillMaxWidth().clickable { onAddToOrder() }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)) {
         Row(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(text = product.name, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
@@ -1163,7 +1064,7 @@ fun ProductOrderCard(product: Product, onAddToOrder: () -> Unit) {
 }
 
 // ============================================================
-// Order Summary, Transfer, Split, Payment Dialogs
+// Dialogs
 // ============================================================
 
 @Composable
@@ -1174,15 +1075,11 @@ fun TransferTableDialog(currentTable: Int, availableTables: List<Table>, onDismi
         text = {
             Column {
                 Text("Μεταφορά από Τραπέζι $currentTable σε:", modifier = Modifier.padding(bottom = 16.dp))
-                if (availableTables.isEmpty()) {
-                    Text("Δεν υπάρχουν διαθέσιμα τραπέζια", color = Color.Gray)
-                } else {
+                if (availableTables.isEmpty()) { Text("Δεν υπάρχουν διαθέσιμα τραπέζια", color = Color.Gray) }
+                else {
                     LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
                         items(availableTables.sortedBy { it.number }) { table ->
-                            Card(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { onTransfer(table.number) },
-                                colors = CardDefaults.cardColors(containerColor = Color(0xFF4CAF50))
-                            ) {
+                            Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { onTransfer(table.number) }, colors = CardDefaults.cardColors(containerColor = Color(0xFF4CAF50))) {
                                 Row(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                     Text("Τραπέζι ${table.number}", color = Color.White, fontWeight = FontWeight.Bold)
                                     Icon(Icons.Default.ArrowForward, contentDescription = null, tint = Color.White)
@@ -1231,10 +1128,7 @@ fun SplitBillDialog(orderItems: List<OrderItem>, total: Double, onDismiss: () ->
                     orderItems.forEach { item ->
                         Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                             Row(modifier = Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Column {
-                                    Text(item.product.name, fontWeight = FontWeight.Medium)
-                                    Text("${item.quantity}x €${String.format("%.2f", item.product.price)}", fontSize = 12.sp, color = Color.Gray)
-                                }
+                                Column { Text(item.product.name, fontWeight = FontWeight.Medium); Text("${item.quantity}x €${String.format("%.2f", item.product.price)}", fontSize = 12.sp, color = Color.Gray) }
                                 Text("€${String.format("%.2f", item.product.price * item.quantity)}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                             }
                         }
@@ -1267,34 +1161,21 @@ fun OrderSummaryDialog(
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(item.product.name, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                                     val details = item.getDisplayDetails()
-                                    if (details.isNotEmpty()) {
-                                        Text(details, fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
-                                    }
+                                    if (details.isNotEmpty()) Text(details, fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
                                     Text("€${String.format("%.2f", item.product.price)} x ${item.quantity}", fontSize = 12.sp, color = Color.Gray)
                                 }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    IconButton(onClick = { if (item.quantity > 1) { item.quantity--; items = items.toList(); onUpdateOrder(items) } }) {
-                                        Icon(Icons.Default.Clear, contentDescription = "Remove", tint = Color.Gray)
-                                    }
+                                    IconButton(onClick = { if (item.quantity > 1) { item.quantity--; items = items.toList(); onUpdateOrder(items) } }) { Icon(Icons.Default.Clear, contentDescription = "Remove", tint = Color.Gray) }
                                     Text("${item.quantity}", fontWeight = FontWeight.Bold)
-                                    IconButton(onClick = { item.quantity++; items = items.toList(); onUpdateOrder(items) }) {
-                                        Icon(Icons.Default.Add, contentDescription = "Add", tint = Color.Gray)
-                                    }
-                                    IconButton(onClick = { items = items.filter { it != item }; onUpdateOrder(items) }) {
-                                        Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red)
-                                    }
+                                    IconButton(onClick = { item.quantity++; items = items.toList(); onUpdateOrder(items) }) { Icon(Icons.Default.Add, contentDescription = "Add", tint = Color.Gray) }
+                                    IconButton(onClick = { items = items.filter { it != item }; onUpdateOrder(items) }) { Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red) }
                                 }
                             }
                         }
                     }
                 }
-                Spacer(modifier = Modifier.height(16.dp))
-                Divider()
-                Text(
-                    "Σύνολο: €${String.format("%.2f", items.sumOf { it.product.price * it.quantity })}",
-                    fontWeight = FontWeight.Bold, fontSize = 20.sp, color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.align(Alignment.End).padding(top = 8.dp)
-                )
+                Spacer(modifier = Modifier.height(16.dp)); Divider()
+                Text("Σύνολο: €${String.format("%.2f", items.sumOf { it.product.price * it.quantity })}", fontWeight = FontWeight.Bold, fontSize = 20.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.align(Alignment.End).padding(top = 8.dp))
             }
         },
         confirmButton = {
@@ -1329,10 +1210,7 @@ fun PaymentMethodDialog(onDismiss: () -> Unit, onSelect: (String) -> Unit) {
         text = {
             Column {
                 listOf("Μετρητά", "Κάρτα", "POS").forEach { method ->
-                    Card(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { onSelect(method) },
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary)
-                    ) {
+                    Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { onSelect(method) }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary)) {
                         Row(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Text(method, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                             Icon(when (method) { "Μετρητά" -> Icons.Default.ShoppingCart; "Κάρτα" -> Icons.Default.Favorite; else -> Icons.Default.Phone }, contentDescription = null, tint = Color.White)
@@ -1399,15 +1277,14 @@ fun StatisticsPanel(orderHistory: List<CompletedOrder>) {
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
         Text("Στατιστικά Πωλήσεων", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground, modifier = Modifier.padding(bottom = 16.dp))
-
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             StatCard(title = "Συνολικά Έσοδα", value = "€${String.format("%.2f", totalRevenue)}", color = Color(0xFF4CAF50), modifier = Modifier.weight(1f))
             StatCard(title = "Παραγγελίες", value = "$totalOrders", color = Color(0xFF2196F3), modifier = Modifier.weight(1f))
         }
         Spacer(modifier = Modifier.height(12.dp))
         StatCard(title = "Μέσος Όρος", value = "€${String.format("%.2f", averageOrder)}", color = Color(0xFFFF9800), modifier = Modifier.fillMaxWidth())
-
         Spacer(modifier = Modifier.height(24.dp))
+
         if (productStats.isNotEmpty()) {
             Text("🏆 Top 10 Προϊόντα", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
             Spacer(modifier = Modifier.height(8.dp))
@@ -1500,7 +1377,7 @@ fun TablesAdminPanel(tables: List<Table>, onTablesChange: (List<Table>) -> Unit)
 }
 
 // ============================================================
-// Initial Data
+// Initial Data (used only on first launch)
 // ============================================================
 
 fun getInitialProducts(): List<Product> {
