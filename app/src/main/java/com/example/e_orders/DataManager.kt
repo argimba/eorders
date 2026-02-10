@@ -5,105 +5,41 @@ import android.content.SharedPreferences
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 
+data class AppUser(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val username: String,
+    val password: String,
+    val role: String = "waiter" // "admin" or "waiter"
+)
+
 class DataManager(context: Context) {
 
     private val prefs: SharedPreferences = context.getSharedPreferences("cafe_order_data", Context.MODE_PRIVATE)
     private val gson = Gson()
 
-    // ============================================================
-    // Categories
-    // ============================================================
+    fun saveCategories(categories: List<String>) { prefs.edit().putString("categories", gson.toJson(categories)).apply() }
+    fun loadCategories(): List<String>? { val j = prefs.getString("categories", null) ?: return null; return gson.fromJson(j, object : TypeToken<List<String>>() {}.type) }
 
-    fun saveCategories(categories: List<String>) {
-        prefs.edit().putString("categories", gson.toJson(categories)).apply()
-    }
+    fun saveProducts(products: List<Product>) { prefs.edit().putString("products", gson.toJson(products)).apply() }
+    fun loadProducts(): List<Product>? { val j = prefs.getString("products", null) ?: return null; return gson.fromJson(j, object : TypeToken<List<Product>>() {}.type) }
 
-    fun loadCategories(): List<String>? {
-        val json = prefs.getString("categories", null) ?: return null
-        return gson.fromJson(json, object : TypeToken<List<String>>() {}.type)
-    }
+    fun saveCustomizations(customizations: Map<String, List<CustomizationOption>>) { prefs.edit().putString("customizations", gson.toJson(customizations)).apply() }
+    fun loadCustomizations(): Map<String, List<CustomizationOption>>? { val j = prefs.getString("customizations", null) ?: return null; return gson.fromJson(j, object : TypeToken<Map<String, List<CustomizationOption>>>() {}.type) }
 
-    // ============================================================
-    // Products
-    // ============================================================
+    fun saveTables(tables: List<Table>) { prefs.edit().putString("tables", gson.toJson(tables)).apply() }
+    fun loadTables(): List<Table>? { val j = prefs.getString("tables", null) ?: return null; return gson.fromJson(j, object : TypeToken<List<Table>>() {}.type) }
 
-    fun saveProducts(products: List<Product>) {
-        prefs.edit().putString("products", gson.toJson(products)).apply()
-    }
+    fun saveOrderHistory(history: List<CompletedOrder>) { prefs.edit().putString("order_history", gson.toJson(history)).apply() }
+    fun loadOrderHistory(): List<CompletedOrder>? { val j = prefs.getString("order_history", null) ?: return null; return gson.fromJson(j, object : TypeToken<List<CompletedOrder>>() {}.type) }
 
-    fun loadProducts(): List<Product>? {
-        val json = prefs.getString("products", null) ?: return null
-        return gson.fromJson(json, object : TypeToken<List<Product>>() {}.type)
-    }
+    fun saveDarkMode(isDark: Boolean) { prefs.edit().putBoolean("dark_mode", isDark).apply() }
+    fun loadDarkMode(): Boolean { return prefs.getBoolean("dark_mode", false) }
 
-    // ============================================================
-    // Customization Options
-    // ============================================================
+    fun saveUsers(users: List<AppUser>) { prefs.edit().putString("users", gson.toJson(users)).apply() }
+    fun loadUsers(): List<AppUser>? { val j = prefs.getString("users", null) ?: return null; return gson.fromJson(j, object : TypeToken<List<AppUser>>() {}.type) }
 
-    fun saveCustomizations(customizations: Map<String, List<CustomizationOption>>) {
-        prefs.edit().putString("customizations", gson.toJson(customizations)).apply()
-    }
+    fun saveLanguage(lang: String) { prefs.edit().putString("language", lang).apply() }
+    fun loadLanguage(): String { return prefs.getString("language", "EL") ?: "EL" }
 
-    fun loadCustomizations(): Map<String, List<CustomizationOption>>? {
-        val json = prefs.getString("customizations", null) ?: return null
-        return gson.fromJson(json, object : TypeToken<Map<String, List<CustomizationOption>>>() {}.type)
-    }
-
-    // ============================================================
-    // Tables
-    // ============================================================
-
-    fun saveTables(tables: List<Table>) {
-        prefs.edit().putString("tables", gson.toJson(tables)).apply()
-    }
-
-    fun loadTables(): List<Table>? {
-        val json = prefs.getString("tables", null) ?: return null
-        return gson.fromJson(json, object : TypeToken<List<Table>>() {}.type)
-    }
-
-    // ============================================================
-    // Order History
-    // ============================================================
-
-    fun saveOrderHistory(history: List<CompletedOrder>) {
-        prefs.edit().putString("order_history", gson.toJson(history)).apply()
-    }
-
-    fun loadOrderHistory(): List<CompletedOrder>? {
-        val json = prefs.getString("order_history", null) ?: return null
-        return gson.fromJson(json, object : TypeToken<List<CompletedOrder>>() {}.type)
-    }
-
-    // ============================================================
-    // Dark Mode
-    // ============================================================
-
-    fun saveDarkMode(isDark: Boolean) {
-        prefs.edit().putBoolean("dark_mode", isDark).apply()
-    }
-
-    fun loadDarkMode(): Boolean {
-        return prefs.getBoolean("dark_mode", false)
-    }
-
-    // ============================================================
-    // Admin Password
-    // ============================================================
-
-    fun saveAdminPassword(password: String) {
-        prefs.edit().putString("admin_password", password).apply()
-    }
-
-    fun loadAdminPassword(): String {
-        return prefs.getString("admin_password", "admin123") ?: "admin123"
-    }
-
-    // ============================================================
-    // Clear all data (reset)
-    // ============================================================
-
-    fun clearAll() {
-        prefs.edit().clear().apply()
-    }
+    fun clearAll() { prefs.edit().clear().apply() }
 }
