@@ -99,4 +99,23 @@ object Strings {
     val english get() = when (current) { Language.EL -> "Αγγλικά"; Language.EN -> "English" }
     val settings get() = when (current) { Language.EL -> "Ρυθμίσεις"; Language.EN -> "Settings" }
     val cantDeleteLastAdmin get() = when (current) { Language.EL -> "Δεν μπορείτε να διαγράψετε τον τελευταίο admin!"; Language.EN -> "Cannot delete the last admin!" }
+    val printer get() = when (current) { Language.EL -> "Εκτυπωτής"; Language.EN -> "Printer" }
+    val printerSettings get() = when (current) { Language.EL -> "Ρυθμίσεις Εκτυπωτή"; Language.EN -> "Printer Settings" }
+    val connectionType get() = when (current) { Language.EL -> "Τύπος Σύνδεσης"; Language.EN -> "Connection Type" }
+    val noPrinter get() = when (current) { Language.EL -> "Χωρίς εκτυπωτή"; Language.EN -> "No printer" }
+    val bluetooth get() = when (current) { Language.EL -> "Bluetooth"; Language.EN -> "Bluetooth" }
+    val wifi get() = when (current) { Language.EL -> "WiFi (IP)"; Language.EN -> "WiFi (IP)" }
+    val selectDevice get() = when (current) { Language.EL -> "Επιλογή Συσκευής"; Language.EN -> "Select Device" }
+    val pairedDevices get() = when (current) { Language.EL -> "Ζευγοποιημένες Συσκευές"; Language.EN -> "Paired Devices" }
+    val noPairedDevices get() = when (current) { Language.EL -> "Δεν βρέθηκαν ζευγοποιημένες συσκευές.\nΖευγοποιήστε τον εκτυπωτή από τις ρυθμίσεις Bluetooth."; Language.EN -> "No paired devices found.\nPair printer from Bluetooth settings." }
+    val ipAddress get() = when (current) { Language.EL -> "Διεύθυνση IP"; Language.EN -> "IP Address" }
+    val port get() = when (current) { Language.EL -> "Θύρα (Port)"; Language.EN -> "Port" }
+    val testPrint get() = when (current) { Language.EL -> "Δοκιμαστική Εκτύπωση"; Language.EN -> "Test Print" }
+    val printing get() = when (current) { Language.EL -> "Εκτύπωση..."; Language.EN -> "Printing..." }
+    val printSuccess get() = when (current) { Language.EL -> "Εκτυπώθηκε!"; Language.EN -> "Printed!" }
+    val printError get() = when (current) { Language.EL -> "Σφάλμα εκτύπωσης"; Language.EN -> "Print error" }
+    val printerConfigured get() = when (current) { Language.EL -> "Εκτυπωτής ρυθμισμένος"; Language.EN -> "Printer configured" }
+    val printerNotConfigured get() = when (current) { Language.EL -> "Χωρίς εκτυπωτή"; Language.EN -> "No printer" }
+    val bluetoothPermissionNeeded get() = when (current) { Language.EL -> "Απαιτούνται δικαιώματα Bluetooth"; Language.EN -> "Bluetooth permissions required" }
+    val connected get() = when (current) { Language.EL -> "Συνδεδεμένο"; Language.EN -> "Connected" }
 }

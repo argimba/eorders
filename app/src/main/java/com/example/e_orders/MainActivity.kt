@@ -3,8 +3,12 @@
 package com.example.e_orders
 
 import android.os.Bundle
+import android.annotation.SuppressLint
+import android.Manifest
+import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -33,6 +37,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
 
 // ============================================================
 // Data Models
@@ -273,6 +280,8 @@ fun MainContent(
 ) {
     val isAdmin = loggedInUser.role == "admin"
     var isAdminMode by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val printerManager = remember { PrinterManager(context) }
     var products by remember { mutableStateOf(dataManager.loadProducts() ?: getInitialProducts()) }
     var tables by remember { mutableStateOf(dataManager.loadTables() ?: getInitialTables(17)) }
     var tableOrders by remember { mutableStateOf<Map<String, TableOrder>>(emptyMap()) }
@@ -327,7 +336,7 @@ fun MainContent(
                     AdminPanel(
                         products = products, categories = categories, tables = tables,
                         orderHistory = orderHistory, categoryCustomizations = categoryCustomizations,
-                        appUsers = appUsers,
+                        appUsers = appUsers, printerManager = printerManager,
                         onProductsChange = { products = it; dataManager.saveProducts(it) },
                         onCategoriesChange = { categories = it; dataManager.saveCategories(it) },
                         onTablesChange = { tables = it; dataManager.saveTables(it) },
@@ -345,6 +354,7 @@ fun MainContent(
                         currentOrder = currentTableOrder?.items?.toMutableList() ?: mutableListOf(),
                         currentStatus = currentTableOrder?.status ?: OrderStatus.DRAFT,
                         allTables = tables.filter { it.isActive }, tableOrders = tableOrders,
+                        printerManager = printerManager,
                         onOrderUpdate = { items, status ->
                             if (items.isEmpty()) tableOrders = tableOrders - table.id
                             else tableOrders = tableOrders + (table.id to TableOrder(tableId = table.id, tableName = table.name, items = items, status = status))
@@ -405,13 +415,13 @@ fun TableCard(table: Table, hasOrder: Boolean, orderStatus: OrderStatus?, total:
 fun AdminPanel(
     products: List<Product>, categories: List<String>, tables: List<Table>,
     orderHistory: List<CompletedOrder>, categoryCustomizations: Map<String, List<CustomizationOption>>,
-    appUsers: List<AppUser>,
+    appUsers: List<AppUser>, printerManager: PrinterManager,
     onProductsChange: (List<Product>) -> Unit, onCategoriesChange: (List<String>) -> Unit,
     onTablesChange: (List<Table>) -> Unit, onCustomizationsChange: (Map<String, List<CustomizationOption>>) -> Unit,
     onClearHistory: () -> Unit, onUsersChange: (List<AppUser>) -> Unit
 ) {
     var selectedTab by remember { mutableStateOf(0) }
-    val tabs = listOf(Strings.products, Strings.options, Strings.tables, Strings.users, Strings.history, Strings.statistics)
+    val tabs = listOf(Strings.products, Strings.options, Strings.tables, Strings.users, Strings.printer, Strings.history, Strings.statistics)
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         ScrollableTabRow(selectedTabIndex = selectedTab, containerColor = MaterialTheme.colorScheme.surface) {
@@ -422,8 +432,9 @@ fun AdminPanel(
             1 -> CustomizationAdminPanel(categories, categoryCustomizations, onCategoriesChange, onCustomizationsChange, products, onProductsChange)
             2 -> TablesAdminPanel(tables, onTablesChange)
             3 -> UsersAdminPanel(appUsers, onUsersChange)
-            4 -> OrderHistoryPanel(orderHistory)
-            5 -> StatisticsPanel(orderHistory, onClearHistory)
+            4 -> PrinterSettingsPanel(printerManager)
+            5 -> OrderHistoryPanel(orderHistory)
+            6 -> StatisticsPanel(orderHistory, onClearHistory, printerManager)
         }
     }
 }
@@ -719,6 +730,7 @@ fun OrderScreen(
     products: List<Product>, categories: List<String>, categoryCustomizations: Map<String, List<CustomizationOption>>,
     table: Table, currentOrder: MutableList<OrderItem>, currentStatus: OrderStatus,
     allTables: List<Table>, tableOrders: Map<String, TableOrder>,
+    printerManager: PrinterManager,
     onOrderUpdate: (MutableList<OrderItem>, OrderStatus) -> Unit, onTransferTable: (String, Table) -> Unit,
     onCloseOrder: (CompletedOrder) -> Unit, onBack: () -> Unit
 ) {
@@ -731,7 +743,19 @@ fun OrderScreen(
     var showSplitBillDialog by remember { mutableStateOf(false) }
     var sentItemsCount by remember(table.id) { mutableStateOf(if (currentStatus == OrderStatus.SENT) currentOrder.size else 0) }
     val hasNewItems = orderItems.size > sentItemsCount
+    val scope = rememberCoroutineScope()
+    var printMessage by remember { mutableStateOf<String?>(null) }
     fun saveOrder() { onOrderUpdate(orderItems.toMutableList(), orderStatus) }
+    fun sendAndPrint() {
+        orderStatus = OrderStatus.SENT; sentItemsCount = orderItems.size; saveOrder()
+        // Print to thermal printer
+        scope.launch {
+            try {
+                val receipt = printerManager.buildOrderReceipt(table.name, orderItems)
+                printerManager.print(receipt)
+            } catch (_: Exception) { /* Ignore print errors silently */ }
+        }
+    }
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         if (categories.isNotEmpty()) ScrollableTabRow(selectedTabIndex = maxOf(0, categories.indexOf(selCat)), containerColor = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.primary) { categories.forEach { c -> Tab(selected = selCat == c, onClick = { selCat = c }, text = { Text(c) }) } }
@@ -753,7 +777,7 @@ fun OrderScreen(
                     }
                     if (orderStatus == OrderStatus.DRAFT || hasNewItems) {
                         Spacer(Modifier.height(8.dp))
-                        Button(onClick = { orderStatus = OrderStatus.SENT; sentItemsCount = orderItems.size; saveOrder() }, Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFFFF9800))) {
+                        Button(onClick = { sendAndPrint() }, Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFFFF9800))) {
                             Icon(Icons.Default.Send, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text(if (hasNewItems && orderStatus == OrderStatus.SENT) Strings.sendNew else Strings.sendToBar)
                         }
                     }
@@ -763,7 +787,7 @@ fun OrderScreen(
     }
 
     if (selectedProduct != null) ProductCustomizationDialog(selectedProduct!!, categoryCustomizations[selectedProduct!!.category] ?: emptyList(), { selectedProduct = null }) { item -> orderItems = (orderItems + item).toMutableList(); saveOrder(); selectedProduct = null }
-    if (showOrderSummary) OrderSummaryDialog(table.name, orderItems, orderStatus, hasNewItems, { showOrderSummary = false }, { orderStatus = OrderStatus.SENT; sentItemsCount = orderItems.size; saveOrder(); showOrderSummary = false }, { m -> onCloseOrder(CompletedOrder(tableName = table.name, items = orderItems.toList(), total = orderItems.sumOf { it.product.price * it.quantity }, paymentMethod = m)); showOrderSummary = false }, { u -> orderItems = u.toMutableList(); saveOrder() })
+    if (showOrderSummary) OrderSummaryDialog(table.name, orderItems, orderStatus, hasNewItems, { showOrderSummary = false }, { sendAndPrint(); showOrderSummary = false }, { m -> onCloseOrder(CompletedOrder(tableName = table.name, items = orderItems.toList(), total = orderItems.sumOf { it.product.price * it.quantity }, paymentMethod = m)); showOrderSummary = false }, { u -> orderItems = u.toMutableList(); saveOrder() })
     if (showTransferDialog) TransferTableDialog(table, allTables.filter { it.id != table.id && tableOrders[it.id]?.isEmpty() != false }, { showTransferDialog = false }) { t -> onTransferTable(table.id, t); showTransferDialog = false }
     if (showSplitBillDialog) SplitBillDialog(orderItems, orderItems.sumOf { it.product.price * it.quantity }) { showSplitBillDialog = false }
 }
@@ -944,11 +968,12 @@ fun OrderHistoryPanel(orderHistory: List<CompletedOrder>) {
 }
 
 @Composable
-fun StatisticsPanel(orderHistory: List<CompletedOrder>, onClearHistory: () -> Unit) {
+fun StatisticsPanel(orderHistory: List<CompletedOrder>, onClearHistory: () -> Unit, printerManager: PrinterManager) {
     val totalRevenue = orderHistory.sumOf { it.total }; val totalOrders = orderHistory.size; val averageOrder = if (totalOrders > 0) totalRevenue / totalOrders else 0.0
     val productStats = orderHistory.flatMap { it.items }.groupBy { it.product.name }.mapValues { (_, items) -> items.sumOf { it.quantity } }.toList().sortedByDescending { it.second }.take(10)
     val categoryStats = orderHistory.flatMap { it.items }.groupBy { it.product.category }.mapValues { (_, items) -> items.sumOf { it.product.price * it.quantity } }.toList().sortedByDescending { it.second }
     var showCloseShiftConfirm by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
         Text(Strings.salesStatistics, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground, modifier = Modifier.padding(bottom = 16.dp))
@@ -975,7 +1000,16 @@ fun StatisticsPanel(orderHistory: List<CompletedOrder>, onClearHistory: () -> Un
                     Spacer(Modifier.height(16.dp)); Text("⚠️ ${Strings.historyWillReset}", color = Color.Red, fontWeight = FontWeight.Bold)
                 }
             },
-            confirmButton = { Button(onClick = { onClearHistory(); showCloseShiftConfirm = false }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red)) { Text(Strings.closeShift) } },
+            confirmButton = { Button(onClick = {
+                // Print shift summary
+                scope.launch {
+                    try {
+                        val receipt = printerManager.buildShiftSummary(totalRevenue, totalOrders, averageOrder, categoryStats, productStats)
+                        printerManager.print(receipt)
+                    } catch (_: Exception) { /* Ignore print errors */ }
+                }
+                onClearHistory(); showCloseShiftConfirm = false
+            }, colors = ButtonDefaults.buttonColors(containerColor = Color.Red)) { Text(Strings.closeShift) } },
             dismissButton = { TextButton(onClick = { showCloseShiftConfirm = false }) { Text(Strings.cancel) } })
     }
 }
@@ -985,6 +1019,209 @@ fun StatCard(title: String, value: String, color: Color, modifier: Modifier = Mo
     Card(modifier, colors = CardDefaults.cardColors(containerColor = color)) {
         Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) { Text(title, color = Color.White.copy(alpha = 0.9f), fontSize = 14.sp); Text(value, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold) }
     }
+}
+
+// ============================================================
+// Printer Settings Panel
+// ============================================================
+
+@SuppressLint("MissingPermission")
+@Composable
+fun PrinterSettingsPanel(printerManager: PrinterManager) {
+    var config by remember { mutableStateOf(printerManager.loadConfig()) }
+    var wifiIp by remember { mutableStateOf(config.wifiIp) }
+    var wifiPort by remember { mutableStateOf(config.wifiPort.toString()) }
+    var isPrinting by remember { mutableStateOf(false) }
+    var printResult by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val pairedDevices = remember { printerManager.getPairedDevices() }
+
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)
+    ) {
+        Text(Strings.printerSettings, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onBackground)
+        Spacer(Modifier.height(16.dp))
+
+        // Current status
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(
+            containerColor = if (config.type != "none") Color(0xFF4CAF50) else MaterialTheme.colorScheme.surface
+        )) {
+            Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column {
+                    Text(
+                        if (config.type != "none") Strings.printerConfigured else Strings.printerNotConfigured,
+                        fontWeight = FontWeight.Bold,
+                        color = if (config.type != "none") Color.White else MaterialTheme.colorScheme.onSurface
+                    )
+                    if (config.type == "bluetooth") Text("Bluetooth: ${config.bluetoothName}", fontSize = 13.sp, color = if (config.type != "none") Color.White.copy(alpha = 0.9f) else Color.Gray)
+                    if (config.type == "wifi") Text("WiFi: ${config.wifiIp}:${config.wifiPort}", fontSize = 13.sp, color = Color.White.copy(alpha = 0.9f))
+                }
+                if (config.type != "none") Icon(Icons.Default.CheckCircle, null, tint = Color.White)
+            }
+        }
+
+        Spacer(Modifier.height(24.dp))
+
+        // Connection type selector
+        Text("${Strings.connectionType}:", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = config.type == "none",
+                onClick = { config = PrinterConfig(type = "none"); printerManager.saveConfig(config) },
+                label = { Text(Strings.noPrinter) },
+                modifier = Modifier.weight(1f)
+            )
+            FilterChip(
+                selected = config.type == "bluetooth",
+                onClick = { config = config.copy(type = "bluetooth"); printerManager.saveConfig(config) },
+                label = { Text(Strings.bluetooth) },
+                modifier = Modifier.weight(1f)
+            )
+            FilterChip(
+                selected = config.type == "wifi",
+                onClick = { config = config.copy(type = "wifi"); printerManager.saveConfig(config) },
+                label = { Text(Strings.wifi) },
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        Spacer(Modifier.height(24.dp))
+
+        // Bluetooth settings
+        if (config.type == "bluetooth") {
+            Text(Strings.pairedDevices, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
+            Spacer(Modifier.height(8.dp))
+
+            if (!printerManager.hasBluetoothPermission()) {
+                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFFF9800))) {
+                    Text(Strings.bluetoothPermissionNeeded, color = Color.White, modifier = Modifier.padding(16.dp), fontWeight = FontWeight.Bold)
+                }
+            } else if (pairedDevices.isEmpty()) {
+                Text(Strings.noPairedDevices, color = Color.Gray, fontSize = 14.sp)
+            } else {
+                pairedDevices.forEach { device ->
+                    val deviceName = try { device.name ?: "Unknown" } catch (_: SecurityException) { "Unknown" }
+                    val deviceAddress = device.address
+                    val isSelected = config.bluetoothAddress == deviceAddress
+
+                    Card(
+                        Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable {
+                            config = config.copy(bluetoothAddress = deviceAddress, bluetoothName = deviceName)
+                            printerManager.saveConfig(config)
+                        },
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface
+                        ),
+                        border = if (isSelected) androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
+                    ) {
+                        Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Column {
+                                Text(deviceName, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                Text(deviceAddress, fontSize = 12.sp, color = Color.Gray)
+                            }
+                            if (isSelected) Icon(Icons.Default.CheckCircle, Strings.connected, tint = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                }
+            }
+        }
+
+        // WiFi settings
+        if (config.type == "wifi") {
+            Text("${Strings.ipAddress}:", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = wifiIp, onValueChange = { wifiIp = it },
+                label = { Text(Strings.ipAddress) },
+                placeholder = { Text("192.168.1.100") },
+                singleLine = true, modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = wifiPort, onValueChange = { wifiPort = it },
+                label = { Text(Strings.port) },
+                placeholder = { Text("9100") },
+                singleLine = true, modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+            )
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = {
+                    val p = wifiPort.toIntOrNull() ?: 9100
+                    config = config.copy(wifiIp = wifiIp, wifiPort = p)
+                    printerManager.saveConfig(config)
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+            ) { Text(Strings.save) }
+        }
+
+        Spacer(Modifier.height(24.dp))
+
+        // Test print button
+        if (config.type != "none") {
+            Button(
+                onClick = {
+                    isPrinting = true; printResult = null
+                    scope.launch {
+                        val testData = buildTestReceipt()
+                        val result = printerManager.print(testData)
+                        isPrinting = false
+                        printResult = if (result.isSuccess) Strings.printSuccess
+                        else "${Strings.printError}: ${result.exceptionOrNull()?.message ?: "Unknown"}"
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isPrinting && (config.type == "wifi" || config.bluetoothAddress.isNotEmpty()),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2196F3))
+            ) {
+                if (isPrinting) {
+                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp)); Text(Strings.printing)
+                } else {
+                    Icon(Icons.Default.Build, null); Spacer(Modifier.width(8.dp)); Text(Strings.testPrint)
+                }
+            }
+
+            if (printResult != null) {
+                Spacer(Modifier.height(12.dp))
+                Card(
+                    Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (printResult == Strings.printSuccess) Color(0xFF4CAF50) else Color(0xFFF44336)
+                    )
+                ) {
+                    Text(printResult!!, color = Color.White, modifier = Modifier.padding(16.dp), fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+fun buildTestReceipt(): ByteArray {
+    val buffer = mutableListOf<Byte>()
+    fun add(bytes: ByteArray) { buffer.addAll(bytes.toList()) }
+    fun addText(text: String) { add(text.toByteArray(Charsets.UTF_8)) }
+    fun newLine() { addText("\n") }
+
+    add(EscPos.INIT)
+    add(EscPos.ALIGN_CENTER)
+    add(EscPos.DOUBLE_ON)
+    addText("e-Orders")
+    newLine()
+    add(EscPos.NORMAL)
+    newLine()
+    addText("Test Print OK!")
+    newLine()
+    addText(EscPos.line('-'))
+    newLine()
+    addText(java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.getDefault()).format(java.util.Date()))
+    newLine()
+    add(EscPos.FEED_LINES)
+    add(EscPos.PARTIAL_CUT)
+    return buffer.toByteArray()
 }
 
 // ============================================================
