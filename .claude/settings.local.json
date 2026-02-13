@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.gradlew.bat assembleDebug:*)",
+      "Bash(cmd /c \"gradlew.bat assembleDebug\")",
+      "Bash(cmd /c \"gradlew.bat assembleDebug 2>&1\")",
+      "Bash(cmd.exe:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(JAVA_HOME=\"C:/Program Files/Android/Android Studio/jbr\" \"C:/Users/Argimba/AndroidStudioProjects/eorders/gradlew.bat\":*)",
+      "Bash(JAVA_HOME=\"C:/Program Files/Android/Android Studio/jbr\")",
+      "Bash(adb devices:*)",
+      "Bash(\"C:/Users/Argimba/AppData/Local/Android/Sdk/platform-tools/adb.exe\" devices)"
+    ]
+  }
+}

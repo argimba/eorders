@@ -2,7 +2,6 @@ package com.example.e_orders
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
@@ -17,46 +16,29 @@ import java.net.Socket
 import java.text.SimpleDateFormat
 import java.util.*
 
-// ============================================================
-// Printer Configuration
-// ============================================================
-
 data class PrinterConfig(
-    val type: String = "none", // "bluetooth", "wifi", "none"
+    val type: String = "none",
     val bluetoothAddress: String = "",
     val bluetoothName: String = "",
     val wifiIp: String = "",
     val wifiPort: Int = 9100
 )
 
-// ============================================================
-// ESC/POS Commands for 58mm (32 chars per line)
-// ============================================================
-
 object EscPos {
-    val INIT = byteArrayOf(0x1B, 0x40) // Initialize printer
+    val INIT = byteArrayOf(0x1B, 0x40)
     val ALIGN_LEFT = byteArrayOf(0x1B, 0x61, 0x00)
     val ALIGN_CENTER = byteArrayOf(0x1B, 0x61, 0x01)
-    val ALIGN_RIGHT = byteArrayOf(0x1B, 0x61, 0x02)
     val BOLD_ON = byteArrayOf(0x1B, 0x45, 0x01)
     val BOLD_OFF = byteArrayOf(0x1B, 0x45, 0x00)
     val DOUBLE_HEIGHT_ON = byteArrayOf(0x1B, 0x21, 0x10)
-    val DOUBLE_WIDTH_ON = byteArrayOf(0x1B, 0x21, 0x20)
-    val DOUBLE_ON = byteArrayOf(0x1B, 0x21, 0x30) // Double width + height
+    val DOUBLE_ON = byteArrayOf(0x1B, 0x21, 0x30)
     val NORMAL = byteArrayOf(0x1B, 0x21, 0x00)
-    val CUT = byteArrayOf(0x1D, 0x56, 0x00) // Full cut
     val PARTIAL_CUT = byteArrayOf(0x1D, 0x56, 0x01)
-    val FEED_LINES = byteArrayOf(0x1B, 0x64, 0x04) // Feed 4 lines
-
-    const val LINE_WIDTH = 32 // 58mm = 32 chars
+    val FEED_LINES = byteArrayOf(0x1B, 0x64, 0x04)
+    val CODEPAGE_GREEK = byteArrayOf(0x1B, 0x74, 0x11) // ESC t 17 → Windows-1253 (Greek)
+    const val LINE_WIDTH = 32
 
     fun line(char: Char = '-'): String = String(CharArray(LINE_WIDTH) { char })
-
-    fun padRight(text: String, width: Int): String {
-        return if (text.length >= width) text.take(width)
-        else text + " ".repeat(width - text.length)
-    }
-
     fun leftRight(left: String, right: String): String {
         val space = LINE_WIDTH - left.length - right.length
         return if (space > 0) left + " ".repeat(space) + right
@@ -64,31 +46,16 @@ object EscPos {
     }
 }
 
-// ============================================================
-// Printer Manager
-// ============================================================
-
 class PrinterManager(private val context: Context) {
 
     private val prefs = context.getSharedPreferences("printer_config", Context.MODE_PRIVATE)
     private val gson = com.google.gson.Gson()
 
-    fun saveConfig(config: PrinterConfig) {
-        prefs.edit().putString("config", gson.toJson(config)).apply()
-    }
-
+    fun saveConfig(config: PrinterConfig) { prefs.edit().putString("config", gson.toJson(config)).apply() }
     fun loadConfig(): PrinterConfig {
         val json = prefs.getString("config", null) ?: return PrinterConfig()
-        return try {
-            gson.fromJson(json, PrinterConfig::class.java)
-        } catch (e: Exception) {
-            PrinterConfig()
-        }
+        return try { gson.fromJson(json, PrinterConfig::class.java) } catch (e: Exception) { PrinterConfig() }
     }
-
-    // ============================================================
-    // Bluetooth
-    // ============================================================
 
     fun hasBluetoothPermission(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -102,55 +69,32 @@ class PrinterManager(private val context: Context) {
     @SuppressLint("MissingPermission")
     fun getPairedDevices(): List<BluetoothDevice> {
         if (!hasBluetoothPermission()) return emptyList()
-        val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-        val adapter = bluetoothManager?.adapter ?: return emptyList()
-        return adapter.bondedDevices?.toList() ?: emptyList()
+        val bm = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        return bm?.adapter?.bondedDevices?.toList() ?: emptyList()
     }
 
     @SuppressLint("MissingPermission")
     suspend fun printViaBluetooth(address: String, data: ByteArray): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-            val adapter = bluetoothManager.adapter ?: return@withContext Result.failure(Exception("Bluetooth not available"))
-            val device = adapter.getRemoteDevice(address)
-            val uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB") // SPP UUID
+            val bm = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+            val device = bm.adapter.getRemoteDevice(address)
+            val uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
             val socket: BluetoothSocket = device.createRfcommSocketToServiceRecord(uuid)
             socket.connect()
-            val outputStream: OutputStream = socket.outputStream
-            outputStream.write(data)
-            outputStream.flush()
-            Thread.sleep(500) // Wait for print to complete
-            outputStream.close()
-            socket.close()
+            val os: OutputStream = socket.outputStream
+            os.write(data); os.flush(); Thread.sleep(500); os.close(); socket.close()
             Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
+        } catch (e: Exception) { Result.failure(e) }
     }
-
-    // ============================================================
-    // WiFi
-    // ============================================================
 
     suspend fun printViaWifi(ip: String, port: Int, data: ByteArray): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            val socket = Socket(ip, port)
-            socket.soTimeout = 5000
-            val outputStream = socket.getOutputStream()
-            outputStream.write(data)
-            outputStream.flush()
-            Thread.sleep(500)
-            outputStream.close()
-            socket.close()
+            val socket = Socket(ip, port); socket.soTimeout = 5000
+            val os = socket.getOutputStream()
+            os.write(data); os.flush(); Thread.sleep(500); os.close(); socket.close()
             Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
+        } catch (e: Exception) { Result.failure(e) }
     }
-
-    // ============================================================
-    // Print dispatcher
-    // ============================================================
 
     suspend fun print(data: ByteArray): Result<Unit> {
         val config = loadConfig()
@@ -161,156 +105,88 @@ class PrinterManager(private val context: Context) {
         }
     }
 
-    // ============================================================
-    // Build Order Receipt (sent to bar)
-    // ============================================================
-
-    fun buildOrderReceipt(tableName: String, items: List<OrderItem>): ByteArray {
+    // #4 — Added waiterName parameter
+    fun buildOrderReceipt(tableName: String, items: List<OrderItem>, waiterName: String = ""): ByteArray {
         val dateFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
-        val buffer = mutableListOf<Byte>()
+        val greek = charset("windows-1253")
+        val buf = mutableListOf<Byte>()
+        fun add(b: ByteArray) { buf.addAll(b.toList()) }
+        fun text(s: String) { add(s.toByteArray(greek)) }
+        fun nl() { text("\n") }
 
-        fun add(bytes: ByteArray) { buffer.addAll(bytes.toList()) }
-        fun addText(text: String) { add(text.toByteArray(Charsets.UTF_8)) }
-        fun newLine() { addText("\n") }
+        add(EscPos.INIT); add(EscPos.CODEPAGE_GREEK); add(EscPos.ALIGN_CENTER); add(EscPos.DOUBLE_ON)
+        text("ΠΑΡΑΓΓΕΛΙΑ"); nl(); add(EscPos.NORMAL); nl()
+        add(EscPos.BOLD_ON); add(EscPos.DOUBLE_HEIGHT_ON); text(tableName); nl()
+        add(EscPos.NORMAL); add(EscPos.BOLD_OFF)
+        if (waiterName.isNotEmpty()) { text("Σερβ: $waiterName"); nl() }
+        text(dateFormat.format(Date())); nl()
+        text(EscPos.line('=')); nl()
 
-        add(EscPos.INIT)
-
-        // Header
-        add(EscPos.ALIGN_CENTER)
-        add(EscPos.DOUBLE_ON)
-        addText("ΠΑΡΑΓΓΕΛΙΑ")
-        newLine()
-        add(EscPos.NORMAL)
-        newLine()
-
-        // Table name & date
-        add(EscPos.BOLD_ON)
-        add(EscPos.DOUBLE_HEIGHT_ON)
-        addText(tableName)
-        newLine()
-        add(EscPos.NORMAL)
-        add(EscPos.BOLD_OFF)
-        addText(dateFormat.format(Date()))
-        newLine()
-        addText(EscPos.line('='))
-        newLine()
-
-        // Items
         add(EscPos.ALIGN_LEFT)
         items.forEach { item ->
-            add(EscPos.BOLD_ON)
-            addText("${item.quantity}x ${item.product.name}")
-            newLine()
-            add(EscPos.BOLD_OFF)
-
-            // Customizations
-            item.customizations.forEach { (key, value) ->
-                if (value.isNotEmpty()) {
-                    addText("  $key: $value")
-                    newLine()
-                }
-            }
-            // Notes
-            if (item.notes.isNotEmpty()) {
-                addText("  >> ${item.notes}")
-                newLine()
-            }
-            addText(EscPos.line('-'))
-            newLine()
+            add(EscPos.BOLD_ON); text("${item.quantity}x ${item.product.name}"); nl(); add(EscPos.BOLD_OFF)
+            item.customizations.forEach { (k, v) -> if (v.isNotEmpty()) { text("  $k: $v"); nl() } }
+            if (item.notes.isNotEmpty()) { text("  >> ${item.notes}"); nl() }
+            text(EscPos.line('-')); nl()
         }
-
-        // Feed & cut
-        add(EscPos.FEED_LINES)
-        add(EscPos.PARTIAL_CUT)
-
-        return buffer.toByteArray()
+        add(EscPos.FEED_LINES); add(EscPos.PARTIAL_CUT)
+        return buf.toByteArray()
     }
 
-    // ============================================================
-    // Build Shift Summary Receipt
-    // ============================================================
-
-    fun buildShiftSummary(
-        totalRevenue: Double,
-        totalOrders: Int,
-        averageOrder: Double,
-        categoryStats: List<Pair<String, Double>>,
-        productStats: List<Pair<String, Int>>
-    ): ByteArray {
+    fun buildNewItemsReceipt(tableName: String, newItems: List<OrderItem>, waiterName: String = ""): ByteArray {
         val dateFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
-        val buffer = mutableListOf<Byte>()
+        val greek = charset("windows-1253")
+        val buf = mutableListOf<Byte>()
+        fun add(b: ByteArray) { buf.addAll(b.toList()) }
+        fun text(s: String) { add(s.toByteArray(greek)) }
+        fun nl() { text("\n") }
 
-        fun add(bytes: ByteArray) { buffer.addAll(bytes.toList()) }
-        fun addText(text: String) { add(text.toByteArray(Charsets.UTF_8)) }
-        fun newLine() { addText("\n") }
+        add(EscPos.INIT); add(EscPos.CODEPAGE_GREEK); add(EscPos.ALIGN_CENTER); add(EscPos.DOUBLE_ON)
+        text("** ΝΕΑ ΠΡΟΪΟΝΤΑ **"); nl(); add(EscPos.NORMAL); nl()
+        add(EscPos.BOLD_ON); add(EscPos.DOUBLE_HEIGHT_ON); text(tableName); nl()
+        add(EscPos.NORMAL); add(EscPos.BOLD_OFF)
+        if (waiterName.isNotEmpty()) { text("Σερβ: $waiterName"); nl() }
+        text(dateFormat.format(Date())); nl()
+        text(EscPos.line('=')); nl()
 
-        add(EscPos.INIT)
-
-        // Header
-        add(EscPos.ALIGN_CENTER)
-        add(EscPos.DOUBLE_ON)
-        addText("ΚΛΕΙΣΙΜΟ ΒΑΡΔΙΑΣ")
-        newLine()
-        add(EscPos.NORMAL)
-        addText(dateFormat.format(Date()))
-        newLine()
-        addText(EscPos.line('='))
-        newLine()
-
-        // Totals
         add(EscPos.ALIGN_LEFT)
-        add(EscPos.BOLD_ON)
-        newLine()
-        addText(EscPos.leftRight("ΣΥΝΟΛΟ ΕΣΟΔΩΝ:", "€${String.format("%.2f", totalRevenue)}"))
-        newLine()
-        addText(EscPos.leftRight("ΠΑΡΑΓΓΕΛΙΕΣ:", "$totalOrders"))
-        newLine()
-        addText(EscPos.leftRight("ΜΕΣΟΣ ΟΡΟΣ:", "€${String.format("%.2f", averageOrder)}"))
-        newLine()
+        newItems.forEach { item ->
+            add(EscPos.BOLD_ON); text("${item.quantity}x ${item.product.name}"); nl(); add(EscPos.BOLD_OFF)
+            item.customizations.forEach { (k, v) -> if (v.isNotEmpty()) { text("  $k: $v"); nl() } }
+            if (item.notes.isNotEmpty()) { text("  >> ${item.notes}"); nl() }
+            text(EscPos.line('-')); nl()
+        }
+        add(EscPos.FEED_LINES); add(EscPos.PARTIAL_CUT)
+        return buf.toByteArray()
+    }
+
+    fun buildShiftSummary(totalRevenue: Double, totalOrders: Int, averageOrder: Double, categoryStats: List<Pair<String, Double>>, productStats: List<Pair<String, Int>>): ByteArray {
+        val dateFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
+        val greek = charset("windows-1253")
+        val buf = mutableListOf<Byte>()
+        fun add(b: ByteArray) { buf.addAll(b.toList()) }
+        fun text(s: String) { add(s.toByteArray(greek)) }
+        fun nl() { text("\n") }
+
+        add(EscPos.INIT); add(EscPos.CODEPAGE_GREEK); add(EscPos.ALIGN_CENTER); add(EscPos.DOUBLE_ON)
+        text("ΚΛΕΙΣΙΜΟ ΒΑΡΔΙΑΣ"); nl(); add(EscPos.NORMAL)
+        text(dateFormat.format(Date())); nl(); text(EscPos.line('=')); nl()
+
+        add(EscPos.ALIGN_LEFT); add(EscPos.BOLD_ON); nl()
+        text(EscPos.leftRight("ΣΥΝΟΛΟ ΕΣΟΔΩΝ:", "€${String.format("%.2f", totalRevenue)}")); nl()
+        text(EscPos.leftRight("ΠΑΡΑΓΓΕΛΙΕΣ:", "$totalOrders")); nl()
         add(EscPos.BOLD_OFF)
 
-        // Category breakdown
         if (categoryStats.isNotEmpty()) {
-            newLine()
-            addText(EscPos.line('-'))
-            newLine()
-            add(EscPos.BOLD_ON)
-            addText("ΑΝΑ ΚΑΤΗΓΟΡΙΑ:")
-            newLine()
-            add(EscPos.BOLD_OFF)
-            categoryStats.forEach { (cat, rev) ->
-                addText(EscPos.leftRight("  $cat", "€${String.format("%.2f", rev)}"))
-                newLine()
-            }
+            nl(); text(EscPos.line('-')); nl(); add(EscPos.BOLD_ON); text("ΑΝΑ ΚΑΤΗΓΟΡΙΑ:"); nl(); add(EscPos.BOLD_OFF)
+            categoryStats.forEach { (c, r) -> text(EscPos.leftRight("  $c", "€${String.format("%.2f", r)}")); nl() }
         }
-
-        // Top products
         if (productStats.isNotEmpty()) {
-            newLine()
-            addText(EscPos.line('-'))
-            newLine()
-            add(EscPos.BOLD_ON)
-            addText("TOP ΠΡΟΪΟΝΤΑ:")
-            newLine()
-            add(EscPos.BOLD_OFF)
-            productStats.take(10).forEachIndexed { i, (name, count) ->
-                addText(EscPos.leftRight("  ${i + 1}. $name", "${count}τεμ"))
-                newLine()
-            }
+            nl(); text(EscPos.line('-')); nl(); add(EscPos.BOLD_ON); text("TOP ΠΡΟΪΟΝΤΑ:"); nl(); add(EscPos.BOLD_OFF)
+            productStats.take(10).forEachIndexed { i, (n, c) -> text(EscPos.leftRight("  ${i+1}. $n", "${c}τεμ")); nl() }
         }
-
-        // Footer
-        newLine()
-        addText(EscPos.line('='))
-        newLine()
-        add(EscPos.ALIGN_CENTER)
-        addText("e-Orders")
-        newLine()
-
-        // Feed & cut
-        add(EscPos.FEED_LINES)
-        add(EscPos.PARTIAL_CUT)
-
-        return buffer.toByteArray()
+        nl(); text(EscPos.line('=')); nl(); add(EscPos.ALIGN_CENTER); text("e-Orders"); nl()
+        add(EscPos.FEED_LINES); add(EscPos.PARTIAL_CUT)
+        return buf.toByteArray()
     }
 }
