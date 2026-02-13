@@ -29,8 +29,11 @@ class DataManager(context: Context) {
     fun saveTables(tables: List<Table>) { prefs.edit().putString("tables", gson.toJson(tables)).apply() }
     fun loadTables(): List<Table>? { val j = prefs.getString("tables", null) ?: return null; return gson.fromJson(j, object : TypeToken<List<Table>>() {}.type) }
 
-    fun saveTableOrders(orders: Map<String, TableOrder>) { prefs.edit().putString("table_orders", gson.toJson(orders)).apply() }
-    fun loadTableOrders(): Map<String, TableOrder>? { val j = prefs.getString("table_orders", null) ?: return null; return gson.fromJson(j, object : TypeToken<Map<String, TableOrder>>() {}.type) }
+    fun saveTableOrders(orders: Map<String, TableOrder>) { prefs.edit().putString("table_orders", gson.toJson(orders)).commit() }
+    fun loadTableOrders(): Map<String, TableOrder>? {
+        val j = prefs.getString("table_orders", null) ?: return null
+        return try { gson.fromJson(j, object : TypeToken<Map<String, TableOrder>>() {}.type) } catch (_: Exception) { null }
+    }
 
     fun saveOrderHistory(history: List<CompletedOrder>) { prefs.edit().putString("order_history", gson.toJson(history)).apply() }
     fun loadOrderHistory(): List<CompletedOrder>? { val j = prefs.getString("order_history", null) ?: return null; return gson.fromJson(j, object : TypeToken<List<CompletedOrder>>() {}.type) }

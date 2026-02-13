@@ -38,6 +38,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
@@ -171,15 +174,26 @@ fun MainContent(dataManager: DataManager, isDarkMode: Boolean, onToggleDarkMode:
     var isAdminMode by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val printerManager = remember { PrinterManager(context) }
-    var products by remember { mutableStateOf(dataManager.loadProducts() ?: getInitialProducts()) }
-    var tables by remember { mutableStateOf(dataManager.loadTables() ?: getInitialTables(17)) }
+    var products by remember { mutableStateOf(dataManager.loadProducts() ?: getInitialProducts().also { dataManager.saveProducts(it) }) }
+    var tables by remember { mutableStateOf(dataManager.loadTables() ?: getInitialTables(17).also { dataManager.saveTables(it) }) }
     var tableOrders by remember { mutableStateOf(dataManager.loadTableOrders() ?: emptyMap()) }
     var selectedTable by remember { mutableStateOf<Table?>(null) }
     var orderHistory by remember { mutableStateOf(dataManager.loadOrderHistory() ?: emptyList()) }
-    var categoryCustomizations by remember { mutableStateOf(dataManager.loadCustomizations() ?: getInitialCustomizations()) }
-    var categories by remember { mutableStateOf(dataManager.loadCategories() ?: listOf("Καφέδες", "Αναψυκτικά", "Μπίρες", "Cocktails", "Ποτά", "Snacks")) }
+    var categoryCustomizations by remember { mutableStateOf(dataManager.loadCustomizations() ?: getInitialCustomizations().also { dataManager.saveCustomizations(it) }) }
+    var categories by remember { mutableStateOf(dataManager.loadCategories() ?: listOf("Καφέδες", "Αναψυκτικά", "Μπίρες", "Cocktails", "Ποτά", "Snacks").also { dataManager.saveCategories(it) }) }
 
-    LaunchedEffect(tableOrders) { dataManager.saveTableOrders(tableOrders) }
+    // Save table orders on lifecycle pause/stop to prevent data loss
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE) {
+                dataManager.saveTableOrders(tableOrders)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     Scaffold(topBar = {
         TopAppBar(
             title = { Text(when { isAdminMode -> Strings.adminPanel; selectedTable != null -> selectedTable!!.name; else -> Strings.selectTable }) },
@@ -204,11 +218,13 @@ fun MainContent(dataManager: DataManager, isDarkMode: Boolean, onToggleDarkMode:
                         cto?.items?.toList() ?: emptyList(), cto?.status ?: OrderStatus.DRAFT,
                         tables.filter { it.isActive }, tableOrders, printerManager, loggedInUser.username,
                         onOrderUpdate = { items, status ->
-                            if (items.isEmpty()) tableOrders = tableOrders - table.id
-                            else tableOrders = tableOrders + (table.id to TableOrder(table.id, table.name, items.toMutableList(), status))
+                            val newOrders = if (items.isEmpty()) tableOrders - table.id
+                                else tableOrders + (table.id to TableOrder(table.id, table.name, items.toMutableList(), status))
+                            tableOrders = newOrders
+                            dataManager.saveTableOrders(newOrders)
                         },
-                        onTransferTable = { fromId, toTable -> val o = tableOrders[fromId]; if (o != null) { tableOrders = tableOrders - fromId + (toTable.id to o.copy(tableId = toTable.id, tableName = toTable.name)); selectedTable = toTable } },
-                        onCloseOrder = { co -> orderHistory = orderHistory + co; dataManager.saveOrderHistory(orderHistory); tableOrders = tableOrders - table.id; selectedTable = null },
+                        onTransferTable = { fromId, toTable -> val o = tableOrders[fromId]; if (o != null) { val newOrders = tableOrders - fromId + (toTable.id to o.copy(tableId = toTable.id, tableName = toTable.name)); tableOrders = newOrders; dataManager.saveTableOrders(newOrders); selectedTable = toTable } },
+                        onCloseOrder = { co -> orderHistory = orderHistory + co; dataManager.saveOrderHistory(orderHistory); val newOrders = tableOrders - table.id; tableOrders = newOrders; dataManager.saveTableOrders(newOrders); selectedTable = null },
                         onBack = { selectedTable = null })
                 }
                 else -> TableSelectionScreen(tables.filter { it.isActive }, tableOrders) { selectedTable = it }
